@@ -1,0 +1,170 @@
+services:
+  # ─── OpenBao Vault (Credential Storage) ───────────────────
+  openbao:
+    image: openbao/openbao:2.1.0
+    container_name: insight-vault
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R openbao:openbao /openbao/data && su-exec openbao bao server -config=/openbao/config/config.hcl"]
+    environment:
+      BAO_ADDR: "http://127.0.0.1:8200"
+    ports:
+      - "8200:8200"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ./openbao/config:/openbao/config
+      - vault-data:/openbao/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget --spider --quiet http://127.0.0.1:8200/v1/sys/health || wget --spider --quiet http://127.0.0.1:8200/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - insight-net
+
+  # ─── Vault Init Sidecar ────────────────────────────────────
+  # Initializes and unseals vault on first run, then exits.
+  vault-init:
+    image: openbao/openbao:2.1.0
+    container_name: insight-vault-init
+    entrypoint: ["/bin/sh", "/scripts/init-vault.sh"]
+    environment:
+      BAO_ADDR: "http://openbao:8200"
+    volumes:
+      - ./openbao/scripts:/scripts:ro
+      - vault-init:/vault-init
+    depends_on:
+      openbao:
+        condition: service_healthy
+    networks:
+      - insight-net
+
+  # ─── Backend (FastAPI) ────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: insight-backend
+    environment:
+      VAULT_ADDR: "http://openbao:8200"
+      VAULT_TOKEN_FILE: "/vault-init/root-token"
+      SKILLS_DIR: "/app/skills"
+      DATA_DIR: "/app/data"
+      IMAGES_DIR: "/app/images"
+      # ── LLM Provider Config ──
+      # Set LLM_PROVIDER to: anthropic, openai, or local
+      LLM_PROVIDER: "${LLM_PROVIDER:-anthropic}"
+      # Anthropic
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
+      # OpenAI
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-4o}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      # Local LLM (Ollama, vLLM, llama.cpp, etc.)
+      LOCAL_LLM_BASE_URL: "${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
+      LOCAL_LLM_MODEL: "${LOCAL_LLM_MODEL:-gpt-oss:20b}"
+      LOCAL_LLM_API_KEY: "${LOCAL_LLM_API_KEY:-not-needed}"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/skills:/app/skills
+      - ./backend/data:/app/data
+      - ./backend/images:/app/images
+      - vault-init:/vault-init:ro
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+    networks:
+      - insight-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ─── Frontend (React + Nginx) ─────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: insight-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - insight-net
+
+  # ─── MCP Server (Model Context Protocol) ─────────────────
+  # Exposes skills as MCP tools. Connect any MCP client to
+  # http://<host>:8100/mcp to manage F5 devices.
+  mcp:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: insight-mcp
+    entrypoint: ["python", "/app/mcp_server.py"]
+    environment:
+      VAULT_ADDR: "http://openbao:8200"
+      VAULT_TOKEN_FILE: "/vault-init/root-token"
+      SKILLS_DIR: "/app/skills"
+      MCP_PORT: "8100"
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./backend/skills:/app/skills
+      - ./mcp_server.py:/app/mcp_server.py:ro
+      - vault-init:/vault-init:ro
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+    networks:
+      - insight-net
+
+  # ─── Prometheus (Metrics Collection) ────────────────────
+  # Scrapes BIG-IP metrics for autoscale alerting.
+  # Alert rules trigger webhooks to Insight's automation chains.
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: insight-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    depends_on:
+      - backend
+    networks:
+      - insight-net
+
+  # ─── Alertmanager (Alert Routing) ───────────────────────
+  # Routes fired alerts to Insight's webhook endpoint to
+  # trigger ECMP autoscale chains.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: insight-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    depends_on:
+      - prometheus
+    networks:
+      - insight-net
+
+volumes:
+  vault-data:
+    name: insight-vault-data
+  vault-init:
+    name: insight-vault-init
+  prometheus-data:
+    name: insight-prometheus-data
+
+networks:
+  insight-net:
+    driver: bridge

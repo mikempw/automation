@@ -1,0 +1,89 @@
+# Alertmanager configuration for F5 Insight ECMP autoscale.
+#
+# Routes fired Prometheus alerts to Insight's incoming webhook endpoint,
+# which triggers the appropriate automation chain (Scale-Out or Scale-In).
+#
+# SETUP:
+#   1. Create an incoming_webhook integration in Insight with:
+#        - automation_id: <your scale-out automation ID>
+#        - chain_parameters_mapping:
+#            device: "$.alerts.0.annotations.device"
+#            cluster_id: "$.alerts.0.annotations.cluster_id"
+#   2. Replace SCALE_OUT_INTEGRATION_ID and SCALE_IN_INTEGRATION_ID below
+#      with the actual integration IDs from Insight.
+#
+# The webhook_configs below use Alertmanager's built-in webhook receiver
+# to POST the alert payload to Insight's API.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Default receiver
+  receiver: "null"
+  group_by: ["alertname", "cluster"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # Scale-Out: High CPU alerts
+    - match:
+        action: scale_out
+      receiver: insight-scale-out
+      group_wait: 10s
+      repeat_interval: 10m
+      continue: false
+
+    # Scale-In: Low CPU alerts
+    - match:
+        action: scale_in
+      receiver: insight-scale-in
+      group_wait: 30s
+      repeat_interval: 15m
+      continue: false
+
+    # Critical alerts go to both Insight and (optionally) Slack/PagerDuty
+    - match:
+        severity: critical
+      receiver: insight-critical
+      continue: true
+
+receivers:
+  - name: "null"
+
+  # Scale-Out webhook — replace SCALE_OUT_INTEGRATION_ID with actual ID
+  - name: insight-scale-out
+    webhook_configs:
+      - url: "http://insight-backend:8000/api/integrations/SCALE_OUT_INTEGRATION_ID/webhook"
+        send_resolved: false
+        max_alerts: 1
+
+  # Scale-In webhook — replace SCALE_IN_INTEGRATION_ID with actual ID
+  - name: insight-scale-in
+    webhook_configs:
+      - url: "http://insight-backend:8000/api/integrations/SCALE_IN_INTEGRATION_ID/webhook"
+        send_resolved: false
+        max_alerts: 1
+
+  # Critical alerts — optional notification channel
+  - name: insight-critical
+    webhook_configs:
+      - url: "http://insight-backend:8000/api/integrations/SCALE_OUT_INTEGRATION_ID/webhook"
+        send_resolved: true
+
+  # Uncomment to add Slack notifications for critical alerts:
+  # - name: slack-critical
+  #   slack_configs:
+  #     - api_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+  #       channel: "#f5-alerts"
+  #       title: "{{ .GroupLabels.alertname }}"
+  #       text: "{{ .CommonAnnotations.summary }}"
+
+inhibit_rules:
+  # Don't fire scale-in while scale-out is active
+  - source_match:
+      action: scale_out
+    target_match:
+      action: scale_in
+    equal: ["cluster"]

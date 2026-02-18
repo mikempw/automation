@@ -1,0 +1,48 @@
+{
+  "execution_id": "192dc548",
+  "skill_name": "bigip-vs-toggle",
+  "device_hostname": "mpwlabs1.stl",
+  "status": "complete",
+  "parameters": {
+    "virtual_server": "/Common/luke",
+    "state": "enabled"
+  },
+  "steps": [
+    {
+      "step_name": "show_before",
+      "status": "complete",
+      "command": "echo '=== Before ==='; tmsh show ltm virtual /Common/luke 2>&1 | head -20",
+      "output": "=== Before ===\n\n------------------------------------------------------------------\nLtm::Virtual Server: luke      \n------------------------------------------------------------------\nStatus                         \n  Availability     : available \n  State            : disabled  \n  Reason           : The virtual server is available\n  CMP              : enabled   \n  CMP Mode         : all-cpus  \n  Destination      : 192.168.3.10:80\n                               \nTraffic                             ClientSide  Ephemeral  General\n  Bits In                                    0          0        -\n  Bits Out                                   0          0        -\n  Packets In                                 0          0        -\n  Packets Out                                0          0        -\n  Current Connections                        0          0        -\n  Maximum Connections                        0          0        -\n  Total Connections                          0          0        -\n",
+      "error": null,
+      "duration_ms": 523
+    },
+    {
+      "step_name": "toggle_vs",
+      "status": "complete",
+      "command": "output=$(tmsh modify ltm virtual /Common/luke enabled 2>&1); rc=$?; echo \"$output\"; if [ $rc -ne 0 ]; then echo \"ERROR: Failed (exit code $rc)\"; exit 1; else echo 'Virtual server set to enabled'; fi",
+      "output": "\nVirtual server set to enabled\n",
+      "error": null,
+      "duration_ms": 488
+    },
+    {
+      "step_name": "save_config",
+      "status": "complete",
+      "command": "tmsh save sys config",
+      "output": "Saving running configuration...\n  /config/bigip.conf\n  /config/bigip_base.conf\n  /config/bigip_user.conf\nSaving Ethernet map ...done\nSaving PCI map ...\n - verifying checksum .../var/run/f5pcimap: OK\ndone\n - saving ...done\n",
+      "error": null,
+      "duration_ms": 3902
+    },
+    {
+      "step_name": "show_after",
+      "status": "complete",
+      "command": "echo '=== After ==='; tmsh show ltm virtual /Common/luke 2>&1 | head -20",
+      "output": "=== After ===\n\n------------------------------------------------------------------\nLtm::Virtual Server: luke      \n------------------------------------------------------------------\nStatus                         \n  Availability     : available \n  State            : enabled   \n  Reason           : The virtual server is available\n  CMP              : enabled   \n  CMP Mode         : all-cpus  \n  Destination      : 192.168.3.10:80\n                               \nTraffic                             ClientSide  Ephemeral  General\n  Bits In                                    0          0        -\n  Bits Out                                   0          0        -\n  Packets In                                 0          0        -\n  Packets Out                                0          0        -\n  Current Connections                        0          0        -\n  Maximum Connections                        0          0        -\n  Total Connections                          0          0        -\n",
+      "error": null,
+      "duration_ms": 695
+    }
+  ],
+  "analysis": "1) **State before:** disabled\n2) **Change applied:** Yes - virtual server successfully enabled\n3) **State now:** enabled\n4) **Active connections:** None (0 current connections, no traffic impact)\n\nThe virtual server `/Common/luke` was successfully changed from disabled to enabled state, with configuration saved. No active traffic was affected.",
+  "started_at": "2026-02-10T15:56:41.683719+00:00",
+  "completed_at": "2026-02-10T15:56:50.071936+00:00",
+  "error": null
+}

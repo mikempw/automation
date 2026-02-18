@@ -1,0 +1,73 @@
+# ECMP Autoscale Alert Rules
+#
+# These rules fire alerts to Alertmanager, which routes them to
+# Insight's webhook endpoint to trigger Scale-Out / Scale-In chains.
+#
+# For the PoC, you can test without real metrics by curling the
+# webhook endpoint directly with a mock Alertmanager payload:
+#
+#   curl -X POST http://localhost:8000/api/integrations/{id}/webhook \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#       "status": "firing",
+#       "alerts": [{
+#         "status": "firing",
+#         "labels": {
+#           "alertname": "ECMPClusterHighCPU",
+#           "cluster": "ecmp-prod-01",
+#           "severity": "warning"
+#         },
+#         "annotations": {
+#           "summary": "ECMP cluster CPU above 70% for 2 minutes",
+#           "device": "bigip-master"
+#         }
+#       }]
+#     }'
+
+groups:
+  - name: ecmp_autoscale
+    rules:
+      # ── Scale-Out Trigger ──
+      # Fires when average CPU across the ECMP cluster exceeds 70% for 2 minutes.
+      # Alertmanager routes this to the Scale-Out automation chain.
+      - alert: ECMPClusterHighCPU
+        expr: avg(bigip_cpu_usage{cluster="ecmp-prod-01"}) > 70
+        for: 2m
+        labels:
+          severity: warning
+          action: scale_out
+          cluster: ecmp-prod-01
+        annotations:
+          summary: "ECMP cluster {{ $labels.cluster }} CPU above 70% — triggering scale-out"
+          device: "bigip-master"
+          cluster_id: "ecmp-prod-01"
+
+      # ── Scale-In Trigger ──
+      # Fires when average CPU drops below 30% for 5 minutes AND more than 1
+      # instance is running (don't scale below the master).
+      - alert: ECMPClusterLowCPU
+        expr: >
+          avg(bigip_cpu_usage{cluster="ecmp-prod-01"}) < 30
+          and
+          count(bigip_instances{cluster="ecmp-prod-01"}) > 1
+        for: 5m
+        labels:
+          severity: info
+          action: scale_in
+          cluster: ecmp-prod-01
+        annotations:
+          summary: "ECMP cluster {{ $labels.cluster }} CPU below 30% — triggering scale-in"
+          device: "bigip-master"
+          cluster_id: "ecmp-prod-01"
+
+      # ── Health Check ──
+      # Fires if any BIG-IP in the cluster is unreachable for 3 minutes.
+      # This doesn't trigger autoscale but alerts operators.
+      - alert: ECMPMemberDown
+        expr: up{job="bigip-snmp", cluster="ecmp-prod-01"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          cluster: ecmp-prod-01
+        annotations:
+          summary: "BIG-IP {{ $labels.instance }} in cluster {{ $labels.cluster }} is unreachable"

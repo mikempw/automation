@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  snow-frontend:
+    build: ./frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      - snow-backend
+
+  snow-backend:
+    build: ./backend
+    ports:
+      - "8001:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      # Point this to your F5 Insight webhook endpoint
+      # Example: http://host.docker.internal:8000/api/integrations/webhook/YOUR-TOKEN-HERE
+      - INSIGHT_WEBHOOK_URL=${INSIGHT_WEBHOOK_URL:-}
+    volumes:
+      - snow-data:/app/data
+    # If Insight is on the host network, enable this:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  snow-data:
