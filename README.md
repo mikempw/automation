@@ -1,99 +1,129 @@
-# F5 Insight — Skills-Based Troubleshooting Agent
+# F5 Insight Skills
 
-A framework for building, managing, and executing diagnostic skills against F5 BIG-IP and NGINX devices. Skills follow the [Agent Skills](https://agentskills.io) open specification.
+A skill-based automation and troubleshooting platform for F5 BIG-IP and NGINX infrastructure. Combines a chat-driven agent, a visual workflow editor, ECMP autoscaling, and ITSM integration into a single Docker deployment.
+
+## What It Does
+
+**For network engineers**: Run diagnostic and configuration skills against F5 devices from a browser. Skills are defined as Markdown files with YAML blocks — no code to write. Chain skills into automation workflows with drag-and-drop, add approval gates, and trigger them from ServiceNow tickets or Prometheus alerts.
+
+**For platform teams**: Provide self-service F5 operations with guardrails. Destructive actions require approval. All executions are logged. Credentials never leave the vault. The MCP server lets you plug F5 operations into any AI agent.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Docker Compose                        │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐ │
+│  │ Frontend  │  │ Backend  │  │ OpenBao  │  │  MCP   │ │
+│  │ React     │→ │ FastAPI  │→ │ Vault    │  │ Server │ │
+│  │ :3000     │  │ :8000    │  │ :8200    │  │ :8100  │ │
+│  └──────────┘  └────┬─────┘  └──────────┘  └────────┘ │
+│                     │                                    │
+│  ┌──────────┐  ┌────┴─────┐                             │
+│  │Prometheus│→ │Alertmgr  │  (ECMP autoscale alerting)  │
+│  │ :9090    │  │ :9093    │                              │
+│  └──────────┘  └──────────┘                             │
+└─────────────────────────────────────────────────────────┘
+         │ SSH / iControl REST
+         ▼
+   ┌──────────┐  ┌──────────┐
+   │ BIG-IP   │  │ NGINX    │
+   │ Devices  │  │ Devices  │
+   └──────────┘  └──────────┘
+```
+
+| Container | Port | Role |
+|-----------|------|------|
+| `insight-frontend` | 3000 | React UI — 10-tab interface |
+| `insight-backend` | 8000 | FastAPI — skill execution, automation engine, chat agent |
+| `insight-vault` | 8200 | OpenBao — credential storage (auto-init, auto-unseal) |
+| `insight-mcp` | 8100 | MCP server — exposes skills as tools for AI agents |
+| `insight-prometheus` | 9090 | Metrics collection for autoscale alerting |
+| `insight-alertmanager` | 9093 | Alert routing to webhook-triggered automations |
 
 ## Quick Start
 
 ```bash
-# Clone and start
+git clone https://github.com/YOUR-ORG/f5-insight-skills.git
 cd f5-insight-skills
-cp .env.example .env
 
-# Optional: add your Anthropic API key for AI analysis
-# Edit .env and set ANTHROPIC_API_KEY=sk-ant-...
+# Configure
+cp .env.sample .env
+# Edit .env — set ANTHROPIC_API_KEY (or configure OpenAI/local LLM)
 
-# Launch all 3 containers
-docker compose up --build
+# Launch
+docker compose up -d --build
+
+# Open
+open http://localhost:3000
 ```
 
-Open **http://localhost:3000** in your browser.
+Vault auto-initializes on first boot. No manual setup required.
 
-## Architecture
+## UI Tabs
 
-| Container | Port | Purpose |
-|-----------|------|---------|
-| `insight-frontend` | 3000 | React UI — Skill Builder, Runner, Inventory, Device Manager |
-| `insight-backend` | 8000 | FastAPI — Skill execution, device transport, vault integration |
-| `insight-vault` | 8200 | OpenBao — Credential storage (auto-initialized, dev mode) |
+| Tab | Purpose |
+|-----|---------|
+| **Chat** | Natural language interface — describe what you need, the agent picks the right skill |
+| **Devices** | Add/edit BIG-IP and NGINX devices with SSH or key-based auth |
+| **Images** | Stage and push BIG-IP ISO images to devices |
+| **Topology** | Visual virtual server → pool → node topology discovery |
+| **Skills** | Browse, inspect, and run the 29 built-in skills |
+| **Builder** | Create new skills with a guided form |
+| **Automation** | Build and run multi-step skill chains with templates |
+| **Visual Editor** | Drag-and-drop workflow builder with branching and approval gates |
+| **Integrations** | Incoming/outgoing webhooks and MCP client connections |
+| **History** | Chat conversation history |
 
-## First-Run Walkthrough
+## Built-In Skills (29)
 
-1. **Add a device** — Go to Devices → Add Device. Enter hostname, management IP, credentials. Credentials are stored in OpenBao vault.
-2. **Test connectivity** — Click "Test Connection" on your device card.
-3. **Browse skills** — Go to Skills to see the 7 pre-built skills.
-4. **Run a skill** — Click "Run Skill" on any skill, select your device, fill parameters, execute.
-5. **Build a skill** — Go to Builder to create your own skill with the guided form.
+### Diagnostics (read-only)
+`bigip-arp-table` · `bigip-bgp-verify` · `bigip-boot-locations` · `bigip-connection-drain` · `bigip-connection-table` · `bigip-persistence-records` · `bigip-pool-status` · `bigip-route-table` · `bigip-tcpdump` · `bigip-topology` · `bigip-vs-config` · `nginx-log-analysis` · `nginx-tcpdump` · `nginx-upstream-health`
 
-## Pre-Built Skills
+### Configuration (approval required)
+`bigip-bgp-withdraw` · `bigip-config-backup` · `bigip-config-sync` · `bigip-fleet-join` · `bigip-fleet-leave` · `bigip-irule-install` · `bigip-irule-remove` · `bigip-node-toggle` · `bigip-upgrade` · `bigip-ve-deprovision` · `bigip-ve-license` · `bigip-ve-license-revoke` · `bigip-ve-provision` · `bigip-virtual-server-create` · `bigip-vs-toggle`
 
-| Skill | Product | Description |
-|-------|---------|-------------|
-| `bigip-tcpdump` | BIG-IP | Packet capture with F5-specific analysis |
-| `bigip-pool-status` | BIG-IP | Pool member health check |
-| `bigip-virtual-server-create` | BIG-IP | Guided VS creation with rollback |
-| `bigip-connection-table` | BIG-IP | Active connection analysis |
-| `nginx-tcpdump` | NGINX | Packet capture on NGINX |
-| `nginx-log-analysis` | NGINX | Error and access log analysis |
-| `nginx-upstream-health` | NGINX | Upstream backend health check |
+## Automation Templates
 
-## Creating Custom Skills
+Four built-in chain templates for common workflows:
 
-### Via the UI (Skill Builder)
-The Skill Builder provides a guided form with tooltips for every field. Fill in metadata, parameters, steps, safety settings, and optional AI analysis prompts.
+| Template | Steps | Use Case |
+|----------|-------|----------|
+| **Troubleshoot Connectivity** | vs-config → tcpdump → arp-table | Debug traffic flow through a virtual server |
+| **Pool Member Maintenance** | pool-status → node-toggle (⏸ approval) → connection-table | Safely disable a pool member |
+| **ECMP Scale-Out** | ve-provision → ve-license → config-sync → bgp-verify → fleet-join (⏸ approval) | Add a BIG-IP VE to the ECMP cluster |
+| **ECMP Scale-In** | bgp-withdraw (⏸ approval) → connection-drain → ve-license-revoke → fleet-leave → ve-deprovision (⏸ approval) | Gracefully remove a BIG-IP VE |
 
-### Via SKILL.md files
-Drop a folder with a `SKILL.md` file into `backend/skills/`:
+## LLM Support
 
-```
-backend/skills/my-new-skill/
-└── SKILL.md
-```
+Configure one provider in `.env`:
 
-The SKILL.md follows the Agent Skills spec with additional sections for steps, safety, and analysis. See any existing skill for the format.
+| Provider | Variables | Notes |
+|----------|-----------|-------|
+| **Anthropic** (default) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Claude powers chat agent and skill analysis |
+| **OpenAI** | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL` | GPT-4o or compatible |
+| **Local** | `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL` | Any OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp) |
 
-## Credential Management
+Without an API key, skills still execute — AI analysis and chat are skipped gracefully.
 
-Credentials are stored in OpenBao (HashiCorp Vault compatible):
-- **Dev mode**: Auto-initialized, auto-unsealed, in-memory. Zero setup.
-- **Production**: Swap to file storage and proper unseal process.
-- **API compatible**: Uses standard Vault KV v2 API at `secret/data/devices/{hostname}`
+## MCP Server
 
-## AI Analysis (Optional)
+The MCP server at `http://localhost:8100/mcp` exposes all skills as tools via the Model Context Protocol. Connect any MCP-compatible client (Claude Desktop, Claude Code, custom agents) to manage F5 infrastructure through natural language.
 
-Set `ANTHROPIC_API_KEY` in `.env` to enable LLM-powered analysis of skill output. Without it, skills still execute and show raw output — analysis is skipped gracefully.
+## ServiceNow Mock
 
-## API Endpoints
+A separate ServiceNow-accurate mock is included in `snow/` for demonstrating end-to-end ITSM integration. See `snow/README.md` for setup.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Health check + vault status |
-| GET/POST/DELETE | `/api/devices/` | Device CRUD |
-| POST | `/api/devices/{hostname}/test` | Test device connectivity |
-| GET/POST/DELETE | `/api/skills/` | Skill CRUD |
-| GET | `/api/skills/{name}` | Get full skill definition |
-| POST | `/api/execute/` | Execute a skill |
-| GET | `/api/execute/history` | Execution audit log |
+## Documentation
 
-## Development
+| Document | Description |
+|----------|-------------|
+| [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) | Prerequisites, installation, configuration, production hardening |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System design, data flow, file structure, extension points |
+| [SKILL-AUTHORING.md](SKILL-AUTHORING.md) | How to write custom skills with the SKILL.md format |
+| [API-REFERENCE.md](API-REFERENCE.md) | Complete REST API documentation |
 
-```bash
-# Backend only
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+## License
 
-# Frontend only
-cd frontend
-npm install
-npm run dev
-```
+Proprietary — internal use only.
